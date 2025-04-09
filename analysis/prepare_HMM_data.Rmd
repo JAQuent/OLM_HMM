@@ -42,6 +42,7 @@ library(ggforce)
 library(marginaleffects)
 library(gghalves)
 library(effectsize)
+library(ggrain)
 
 # For SVM
 library(caTools) 
@@ -196,27 +197,77 @@ obj_locations <- ddply(OLM_7T_trial_results, c("targets", "objectName", "targetN
 </details>
 
 # Prepare data 
+For now we decided to start modelling only encoding trials because of the simplicity. For this we're using the following measures:
 
+- Distance to object
+- Distance traveled
+- Locomotion
+  - Percent rotation
+  - Percent stationary
+  - Percent translation
+- Distance to centre
+- Number of button presses
+
+
+## Locomotion
+```{r locomotion}
+# The amount we found the values to avoid false positive
+rotation_round  <- 2 # round rotation values to this decimal point
+
+# Function to determine which state a time point belongs to
+what_state <- function(rot_y, moving2){
+  # Get angles 
+  angle1 <- rot_y[2:length(rot_y)]
+  angle2 <- rot_y[1:(length(rot_y)-1)]
+  
+  # Calculate the amount was rotated between the time points and then rotate
+  rotated <- c(NA, round(angularDifference(angle1, angle2), rotation_round))
+  
+  # If rotation is zero, call it stationary, otherwise it is rotation
+  tra_rot_sta <- ifelse(abs(rotated) == 0 | is.na(rotated), 
+                        'stationary', 'rotation') 
+  
+  # Set time point to translation based the information saved by unity
+  tra_rot_sta[moving2] <- 'translation'
+  
+  # Return
+  return(tra_rot_sta)
+}
+
+# Calculate the state for each time points for each subject and each trial
+OLM_7T_position_data <- ddply(OLM_7T_position_data, c("subject", "trial"), 
+                  mutate, locomotion = what_state(rot_y, moving))
+```
+
+
+## Downsampling and average measures
 ```{r downsample_and_calculate_measures}
 # Create X-second bins
 time_window <- 2
 OLM_7T_position_data$time_bin <- floor(OLM_7T_position_data$time / time_window) * time_window
 
-# Current mesaures for encoding trials
-# - Distance to object
-# - Distance traveled
-# - Locomotion
-#     - Percent rotation
-#     - Percent stationary
-#     - Percent translation
-# - Distance to centre
-# - Number of button presses
-
 # Downsample using ddply
 OLM_7T_HMM <- ddply(OLM_7T_position_data, c("subject", "trial", "trialType", "time_bin"), 
-                    summarise, duration = max(time) - min(time))
+                    summarise, duration = max(time) - min(time),
+                    translation = mean(locomotion == "translation"),
+                    rotation = mean(locomotion == "rotation"),
+                    stationary = mean(locomotion == "stationary"))
+```
 
-# View the result
-head(OLM_7T_HMM)
+## Visualise measures
+```{r visualise_measure}
+# Convert from wide to long
+locomotion_df <- reshape2::melt(OLM_7T_HMM, 
+                                id.vars = c("subject", "trial", "trialType", "time_bin", "duration"))
+
+# Create plot
+ggplot(locomotion_df, aes(x = variable, y = value, fill = variable)) +
+	geom_rain(rain.side = 'l', point.args = list(alpha = 0.01), 
+	          point.args.pos = list(position = position_jitter(width = 0.09, height = 0)),
+	          boxplot.args.pos = list(width = 0.05, position = position_nudge(x = 0.15)),
+	          violin.args.pos  = list(width = 0.7, position = position_nudge(x = 0.20))) +
+  theme_classic() +
+  theme(legend.position = "none") +
+  labs(title = "Distribution of locomotion states", x = "Locomotion states", y = "Percent")
 ```
 
