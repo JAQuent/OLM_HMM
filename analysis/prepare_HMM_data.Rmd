@@ -1,0 +1,222 @@
+---
+title: "Prepare data for HMM analysis"
+author: "Joern Alexander Quent"
+date: "`r Sys.Date()`"
+output:
+  html_document:
+    toc: true
+    theme: united
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, message = FALSE, warning = FALSE)
+```
+
+
+# Preparation
+## Libs and parameters
+```{r load_libs}
+# Libraries
+library(ggplot2)
+library(assortedRFunctions)
+library(cowplot) 
+library(stringr)
+library(plyr)
+library(mgcv)
+library(foreach)
+library(doParallel)
+library(BayesFactor)
+library(ciftiTools)
+library(viridis)
+library(tidybayes)
+library(bayesplot)
+library(brms)
+#library(lmerTest)
+library(data.table)
+library(knitr)
+#library(caTools) 
+#library(e1071) 
+library(readxl)
+library(ggridges)
+library(ggforce)
+library(marginaleffects)
+library(gghalves)
+library(effectsize)
+
+# For SVM
+library(caTools) 
+library(e1071) 
+```
+
+
+<details>
+ <summary>Click here for detailed session information. </summary>
+```{r session_info}
+sessioninfo::session_info()
+```
+</details>
+
+<details>
+ <summary>Click here for chunk for statistical reporting parameters. </summary>
+```{r colour_and_report_params}
+# Parameters how to report means
+report_type   <- 1
+digits1       <- 2
+rounding_type <- "signif"
+
+# Font sizes
+font_size   <- 8
+base_theme  <- theme_classic(base_size = font_size) + 
+               theme(plot.title = element_text(hjust = 0.5),
+                     plot.background = element_blank(), 
+                     panel.background = element_rect(fill = "transparent"))
+
+base_theme2  <- theme_classic(base_size = font_size) + 
+               theme(plot.title = element_text(hjust = 0.5),
+                     plot.background = element_blank(), 
+                     panel.background = element_rect(fill = "transparent"),
+                     text = element_text(family = ""),
+                     strip.background = element_rect(color="white", fill="white"))
+
+# Parameters for saving figures
+## Information: https://www.nature.com/ncomms/submit/how-to-submit
+### PDF page: 210 x 276 mm
+### Column widths in mm
+single_column <- 88
+double_column <- 180
+dpi           <- 1000
+figurePath    <- "figures/SpaNov/"
+axisExpand  <- 0.05 # multiply the x & y values
+
+# Function to calculate axis limits
+calc_axis_limits <- function(x, axisExpand, digits = 2, rounding_type = "signif"){
+  # Get the empirical values
+  val_range <- range(x, na.rm = TRUE)
+  
+  # Create axis_breaks
+  axis_breaks <- rep(NA, 3)
+  
+  # Add middle point
+  axis_breaks[2] <- mean(val_range, na.rm = TRUE)
+  
+  # Minimum value
+  if(val_range[1] < 0){
+    axis_breaks[1] <- val_range[1] + val_range[1]*axisExpand
+  } else {
+    axis_breaks[1] <- val_range[1] - val_range[1]*axisExpand
+  }
+  
+  # Maximum value
+  if(val_range[2] < 0){
+    axis_breaks[3] <- val_range[2] - val_range[2]*axisExpand
+  } else {
+    axis_breaks[3] <- val_range[2] + val_range[2]*axisExpand
+  }
+  
+  
+  # Only use significant digits
+  if(rounding_type == "signif"){
+    axis_breaks <- signif(axis_breaks, digits) 
+  } else if(rounding_type == "round"){
+    axis_breaks <- round(axis_breaks, digits) 
+  } else {
+    stop("Wrong rounding_type. Choose signif or round")
+  }
+  
+  # Get the actual limits
+  axis_limits <- axis_breaks[c(1, 3)]
+  
+  # Return list
+  return(list(limits = axis_limits, breaks = axis_breaks))
+}
+
+# Colours used for visualisation
+meanLineColour       <- "red"
+boxplot_borderColour <- "black"
+boxplot_pointColour  <- "darkgrey"
+baseColours          <- c("#7091C0", "#4A66AC", "#364875")
+spectral_colours     <- c("#5956a5", "#a60a44")
+cool_warm_colours    <- c("#3C4DC1", "#B70B28")
+novFam_gradient      <- viridis(n = 6, option = "H", direction = -1)
+
+# Information for Yeo 7
+## Names etc. for the networks in Yeo 7
+Yeo7_fullNames <- c("Frontoparietal", "Default", "Dorsal Attention", "Limbic", 
+                    "Ventral Attention", "Somatomotor", "Visual")
+Yeo7_abbr      <- c("Cont", "Default", "DorsAttn", "Limbic", "SalVentAttn", "SomMot", "Vis")
+
+## Colours used for Yeo 7
+Yeo7_colours <- c("#E79523", "#CD3E4E", "#00760F", "#DCF8A4", "#C43BFA", "#4682B4", "#781286")
+```
+</details>
+
+
+## Loading and preparing the data
+<details>
+ <summary>Click here for loading data. </summary>
+```{r load_data}
+# Load the data
+## Specify paths where the data is saved
+path2data <- "data/"
+
+## Load the look-up table that contains information of R-numbers which are retracted 
+lookupTable  <- read.csv(paste0(path2data, "lookUpTable.csv"))
+
+## Load .RData images of the combined data (all subject in one DF)
+load(paste0(path2data, "demographics.RData"))
+load(paste0(path2data, "DW_all_data.RData"))
+load(paste0(path2data, "OLM_7T_all_data.RData"))
+load(paste0(path2data, "OLM_3T_all_data.RData"))
+load(paste0(path2data, "question_data.RData"))
+
+# Select the subjects included in this analysis
+## Load the subjects that are included in this analysis
+subjectFile <- readLines(paste0(path2data, "SpaNov_subject2analyse.txt"))
+subjIDs_R   <- str_split(subjectFile, pattern = ",")[[1]] 
+subjIDs     <- lookupTable$anonKey[lookupTable$Rnum %in% subjIDs_R]
+# Important note: subjIDs_R do not have the same order as subjIDs!!!!!!!!!!!!!
+
+## Subset to data that is being included in the analysis
+OLM_7T_position_data <- OLM_7T_position_data[OLM_7T_position_data$subject %in% subjIDs, ]
+demographics         <- demographics[demographics$subject %in% subjIDs, ]
+DW_position_data     <- DW_position_data[DW_position_data$subject %in% subjIDs, ]
+OLM_7T_logEntries    <- OLM_7T_logEntries[OLM_7T_logEntries$ppid %in% subjIDs, ]
+OLM_7T_trial_results <- OLM_7T_trial_results[OLM_7T_trial_results$subject %in% subjIDs, ]
+question_data        <- question_data[question_data$subject %in% subjIDs, ]
+
+## Subset to retrieval only
+OLM_7T_retrieval <- OLM_7T_trial_results[OLM_7T_trial_results$trialType == "retrieval", ]
+
+# Get the object locations to verify object placement in screenshots
+obj_locations <- ddply(OLM_7T_trial_results, c("targets", "objectName", "targetNames"),
+                       summarise, object_x_sd = sd(object_x), object_x = mean(object_x),
+                       object_z_sd = sd(object_z), object_z = mean(object_z))
+```
+
+</details>
+
+# Prepare data 
+
+```{r downsample_and_calculate_measures}
+# Create X-second bins
+time_window <- 2
+OLM_7T_position_data$time_bin <- floor(OLM_7T_position_data$time / time_window) * time_window
+
+# Current mesaures for encoding trials
+# - Distance to object
+# - Distance traveled
+# - Locomotion
+#     - Percent rotation
+#     - Percent stationary
+#     - Percent translation
+# - Distance to centre
+# - Number of button presses
+
+# Downsample using ddply
+OLM_7T_HMM <- ddply(OLM_7T_position_data, c("subject", "trial", "trialType", "time_bin"), 
+                    summarise, duration = max(time) - min(time))
+
+# View the result
+head(OLM_7T_HMM)
+```
+
