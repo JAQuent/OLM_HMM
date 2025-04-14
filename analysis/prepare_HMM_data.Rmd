@@ -22,31 +22,11 @@ library(assortedRFunctions)
 library(cowplot) 
 library(stringr)
 library(plyr)
-library(mgcv)
-library(foreach)
-library(doParallel)
-library(BayesFactor)
-library(ciftiTools)
 library(viridis)
-library(tidybayes)
-library(bayesplot)
-library(brms)
-#library(lmerTest)
-library(data.table)
 library(knitr)
-#library(caTools) 
-#library(e1071) 
-library(readxl)
-library(ggridges)
 library(ggforce)
-library(marginaleffects)
 library(gghalves)
-library(effectsize)
 library(ggrain)
-
-# For SVM
-library(caTools) 
-library(e1071) 
 ```
 
 
@@ -65,89 +45,8 @@ report_type   <- 1
 digits1       <- 2
 rounding_type <- "signif"
 
-# Font sizes
-font_size   <- 8
-base_theme  <- theme_classic(base_size = font_size) + 
-               theme(plot.title = element_text(hjust = 0.5),
-                     plot.background = element_blank(), 
-                     panel.background = element_rect(fill = "transparent"))
-
-base_theme2  <- theme_classic(base_size = font_size) + 
-               theme(plot.title = element_text(hjust = 0.5),
-                     plot.background = element_blank(), 
-                     panel.background = element_rect(fill = "transparent"),
-                     text = element_text(family = ""),
-                     strip.background = element_rect(color="white", fill="white"))
-
-# Parameters for saving figures
-## Information: https://www.nature.com/ncomms/submit/how-to-submit
-### PDF page: 210 x 276 mm
-### Column widths in mm
-single_column <- 88
-double_column <- 180
-dpi           <- 1000
-figurePath    <- "figures/SpaNov/"
-axisExpand  <- 0.05 # multiply the x & y values
-
-# Function to calculate axis limits
-calc_axis_limits <- function(x, axisExpand, digits = 2, rounding_type = "signif"){
-  # Get the empirical values
-  val_range <- range(x, na.rm = TRUE)
-  
-  # Create axis_breaks
-  axis_breaks <- rep(NA, 3)
-  
-  # Add middle point
-  axis_breaks[2] <- mean(val_range, na.rm = TRUE)
-  
-  # Minimum value
-  if(val_range[1] < 0){
-    axis_breaks[1] <- val_range[1] + val_range[1]*axisExpand
-  } else {
-    axis_breaks[1] <- val_range[1] - val_range[1]*axisExpand
-  }
-  
-  # Maximum value
-  if(val_range[2] < 0){
-    axis_breaks[3] <- val_range[2] - val_range[2]*axisExpand
-  } else {
-    axis_breaks[3] <- val_range[2] + val_range[2]*axisExpand
-  }
-  
-  
-  # Only use significant digits
-  if(rounding_type == "signif"){
-    axis_breaks <- signif(axis_breaks, digits) 
-  } else if(rounding_type == "round"){
-    axis_breaks <- round(axis_breaks, digits) 
-  } else {
-    stop("Wrong rounding_type. Choose signif or round")
-  }
-  
-  # Get the actual limits
-  axis_limits <- axis_breaks[c(1, 3)]
-  
-  # Return list
-  return(list(limits = axis_limits, breaks = axis_breaks))
-}
-
 # Colours used for visualisation
-meanLineColour       <- "red"
-boxplot_borderColour <- "black"
-boxplot_pointColour  <- "darkgrey"
-baseColours          <- c("#7091C0", "#4A66AC", "#364875")
-spectral_colours     <- c("#5956a5", "#a60a44")
-cool_warm_colours    <- c("#3C4DC1", "#B70B28")
-novFam_gradient      <- viridis(n = 6, option = "H", direction = -1)
-
-# Information for Yeo 7
-## Names etc. for the networks in Yeo 7
-Yeo7_fullNames <- c("Frontoparietal", "Default", "Dorsal Attention", "Limbic", 
-                    "Ventral Attention", "Somatomotor", "Visual")
-Yeo7_abbr      <- c("Cont", "Default", "DorsAttn", "Limbic", "SalVentAttn", "SomMot", "Vis")
-
-## Colours used for Yeo 7
-Yeo7_colours <- c("#E79523", "#CD3E4E", "#00760F", "#DCF8A4", "#C43BFA", "#4682B4", "#781286")
+baseColours          <- c("#003f5c", "#bc5090", "#ffa600")
 ```
 </details>
 
@@ -187,6 +86,7 @@ question_data        <- question_data[question_data$subject %in% subjIDs, ]
 
 ## Subset to retrieval only
 OLM_7T_retrieval <- OLM_7T_trial_results[OLM_7T_trial_results$trialType == "retrieval", ]
+OLM_7T_encoding  <- OLM_7T_trial_results[OLM_7T_trial_results$trialType == "encoding", ]
 
 # Get the object locations to verify object placement in screenshots
 obj_locations <- ddply(OLM_7T_trial_results, c("targets", "objectName", "targetNames"),
@@ -199,18 +99,22 @@ obj_locations <- ddply(OLM_7T_trial_results, c("targets", "objectName", "targetN
 # Prepare data 
 For now we decided to start modelling only encoding trials because of the simplicity. For this we're using the following measures:
 
-- Distance to object
-- Distance traveled
 - Locomotion
   - Percent rotation
   - Percent stationary
   - Percent translation
-- Distance to centre
+- Distances
+  - to the centre
+  - to the object
+  - traveled (probably not worth calculating)
 - Number of button presses
 
 
 ## Locomotion
 ```{r locomotion}
+# Subset to encoding
+OLM_7T_position_encoding <- OLM_7T_position_data[OLM_7T_position_data$trialType == "encoding", ] 
+
 # The amount we found the values to avoid false positive
 rotation_round  <- 2 # round rotation values to this decimal point
 
@@ -235,39 +139,133 @@ what_state <- function(rot_y, moving2){
 }
 
 # Calculate the state for each time points for each subject and each trial
-OLM_7T_position_data <- ddply(OLM_7T_position_data, c("subject", "trial"), 
+OLM_7T_position_encoding <- ddply(OLM_7T_position_encoding, c("subject", "trial"), 
                   mutate, locomotion = what_state(rot_y, moving))
 ```
-
 
 ## Downsampling and average measures
 ```{r downsample_and_calculate_measures}
 # Create X-second bins
 time_window <- 2
-OLM_7T_position_data$time_bin <- floor(OLM_7T_position_data$time / time_window) * time_window
+OLM_7T_position_encoding$time_bin <- floor(OLM_7T_position_encoding$time / time_window) * time_window
+
+# Add current object position to the data
+OLM_7T_position_encoding$object_x <- NA
+OLM_7T_position_encoding$object_z <- NA
+
+## Loop through and add information for each time
+for(i in 1:nrow(OLM_7T_encoding)){
+  # Get index for this participant and this trial
+  index <- OLM_7T_position_encoding$subject == OLM_7T_encoding$subject[i] & 
+    OLM_7T_position_encoding$trial == OLM_7T_encoding$trial_num[i]
+ 
+  # Add object location to position data frame
+  OLM_7T_position_encoding$object_x[index] <- OLM_7T_encoding$object_x[i]
+  OLM_7T_position_encoding$object_z[index] <- OLM_7T_encoding$object_z[i]
+}
+
+# Calculate Euclidean distance between current position and object position
+x1 <- OLM_7T_position_encoding$pos_x
+z1 <- OLM_7T_position_encoding$pos_z
+x2 <- OLM_7T_position_encoding$object_x
+z2 <- OLM_7T_position_encoding$object_z
+OLM_7T_position_encoding$dist2obj <- euclideanDistance3D(x1, 1, z1, x2, 1, z2)
+
+# Calculate distance to centre
+x1 <- OLM_7T_position_encoding$pos_x
+z1 <- OLM_7T_position_encoding$pos_z
+x2 <- 0
+z2 <- 0
+OLM_7T_position_encoding$dist2cenrte <- euclideanDistance3D(x1, 1, z1, x2, 1, z2)
 
 # Downsample using ddply
-OLM_7T_HMM <- ddply(OLM_7T_position_data, c("subject", "trial", "trialType", "time_bin"), 
+OLM_7T_HMM <- ddply(OLM_7T_position_encoding, c("subject", "trial", "trialType", "time_bin"), 
                     summarise, duration = max(time) - min(time),
+                    event_start = min(time), event_end = max(time), 
                     translation = mean(locomotion == "translation"),
                     rotation = mean(locomotion == "rotation"),
-                    stationary = mean(locomotion == "stationary"))
+                    stationary = mean(locomotion == "stationary"), 
+                    dist2obj = mean(dist2obj),
+                    dist2cenrte = mean(dist2cenrte))
+
+# Make start of the trial time 0
+OLM_7T_HMM <- ddply(OLM_7T_HMM, c("subject", "trial"), mutate, time = time_bin - min(time_bin))
+
+# Calculate number of button presses
+## Subset the log data frame to only button presses
+button_messages <- c("Datapixx: Green!", "Datapixx: Red!", "Datapixx: Yellow!", "Datapixx: Blue!")
+OLM_7T_logEntries_button <- OLM_7T_logEntries[OLM_7T_logEntries$message %in% button_messages, ]
+
+## Loop through OLM_7T_HMM and count button presses for the time periods in OLM_7T_logEntries_button
+OLM_7T_HMM$button_presses <- NA
+for(i in 1:nrow(OLM_7T_HMM)){
+  # Get start and time plus subject
+  event_start <- OLM_7T_HMM$event_start[i]
+  event_end   <- OLM_7T_HMM$event_end[i]
+  subject     <- OLM_7T_HMM$subject[i]
+  
+  # Count the number of TRUE values
+  OLM_7T_HMM$button_presses[i] <- sum(OLM_7T_logEntries_button$ppid == subject & 
+        (OLM_7T_logEntries_button$timestamp >= event_start & OLM_7T_logEntries_button$timestamp < event_end))
+}
 ```
 
 ## Visualise measures
-```{r visualise_measure}
+```{r visualise_measure, fig.width = 10}
 # Convert from wide to long
-locomotion_df <- reshape2::melt(OLM_7T_HMM, 
+OLM_7T_HMM_long <- reshape2::melt(OLM_7T_HMM, 
                                 id.vars = c("subject", "trial", "trialType", "time_bin", "duration"))
+# Locomotion
+## Subset to locomotion
+locomotion_df <- OLM_7T_HMM_long[OLM_7T_HMM_long$variable %in% c("translation", "rotation", "stationary"), ]
 
-# Create plot
-ggplot(locomotion_df, aes(x = variable, y = value, fill = variable)) +
+## Create plot
+loco_plot <- ggplot(locomotion_df, aes(x = variable, y = value, fill = variable)) +
+	geom_rain(rain.side = 'l', point.args = list(alpha = 0.01), 
+	          point.args.pos = list(position = position_jitter(width = 0.09, height = 0)),
+	          boxplot.args.pos = list(width = 0.05, position = position_nudge(x = 0.15)),
+	          violin.args.pos  = list(width = 0.7, position = position_nudge(x = 0.20))) +
+  theme_classic() +
+  scale_fill_manual(values = baseColours) +
+  theme(legend.position = "none") +
+  labs(title = "Locomotion states", x = "Locomotion states", y = "Percent")
+
+# Distances
+## Subset to distance to centre and object
+distance_df <- OLM_7T_HMM_long[OLM_7T_HMM_long$variable %in% c("dist2obj", "dist2cenrte"), ]
+
+## Create plot
+dist_plot <- ggplot(distance_df, aes(x = variable, y = value, fill = variable)) +
+	geom_rain(rain.side = 'l', point.args = list(alpha = 0.01), 
+	          point.args.pos = list(position = position_jitter(width = 0.09, height = 0)),
+	          boxplot.args.pos = list(width = 0.05, position = position_nudge(x = 0.15)),
+	          violin.args.pos  = list(width = 0.7, position = position_nudge(x = 0.20))) +
+  scale_fill_manual(values = baseColours[c(1, 3)]) +
+  theme_classic() +
+  theme(legend.position = "none") +
+  labs(title = "Distances", x = "Measure", y = "Virtual metres")
+
+# Distances
+## Subset to distance to centre and object
+button_df <- OLM_7T_HMM_long[OLM_7T_HMM_long$variable %in% c("button_presses"), ]
+
+## Create plot
+button_plot <- ggplot(button_df, aes(x = variable, y = value, fill = variable)) +
 	geom_rain(rain.side = 'l', point.args = list(alpha = 0.01), 
 	          point.args.pos = list(position = position_jitter(width = 0.09, height = 0)),
 	          boxplot.args.pos = list(width = 0.05, position = position_nudge(x = 0.15)),
 	          violin.args.pos  = list(width = 0.7, position = position_nudge(x = 0.20))) +
   theme_classic() +
   theme(legend.position = "none") +
-  labs(title = "Distribution of locomotion states", x = "Locomotion states", y = "Percent")
+  scale_fill_manual(values = baseColours[2]) +
+  labs(title = "Button\npresses", x = "Measure", y = "Number of button presses")
+
+# combine
+plot_grid(loco_plot, dist_plot, button_plot, align = "hv",
+          rel_widths = 3:1, nrow = 1)
 ```
 
+# Write to disk
+```{r save2csv}
+write.csv(OLM_7T_HMM, file = "data/OLM_HMM_encoding.csv", row.names = FALSE)
+```
