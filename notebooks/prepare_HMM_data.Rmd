@@ -1,0 +1,271 @@
+---
+title: "Prepare data for HMM analysis"
+author: "Joern Alexander Quent"
+date: "`r Sys.Date()`"
+output:
+  html_document:
+    toc: true
+    theme: united
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, message = FALSE, warning = FALSE)
+```
+
+
+# Preparation
+## Libs and parameters
+```{r load_libs}
+# Libraries
+library(ggplot2)
+library(assortedRFunctions)
+library(cowplot) 
+library(stringr)
+library(plyr)
+library(viridis)
+library(knitr)
+library(ggforce)
+library(gghalves)
+library(ggrain)
+```
+
+
+<details>
+ <summary>Click here for detailed session information. </summary>
+```{r session_info}
+sessioninfo::session_info()
+```
+</details>
+
+<details>
+ <summary>Click here for chunk for statistical reporting parameters. </summary>
+```{r colour_and_report_params}
+# Parameters how to report means
+report_type   <- 1
+digits1       <- 2
+rounding_type <- "signif"
+
+# Colours used for visualisation
+baseColours          <- c("#003f5c", "#bc5090", "#ffa600")
+```
+</details>
+
+
+## Loading and preparing the data
+<details>
+ <summary>Click here for loading data. </summary>
+```{r load_data}
+# Load the data
+## Specify paths where the data is saved
+path2data <- "data/"
+
+## Load the look-up table that contains information of R-numbers which are retracted 
+lookupTable  <- read.csv(paste0(path2data, "lookUpTable.csv"))
+
+## Load .RData images of the combined data (all subject in one DF)
+load(paste0(path2data, "demographics.RData"))
+load(paste0(path2data, "DW_all_data.RData"))
+load(paste0(path2data, "OLM_7T_all_data.RData"))
+load(paste0(path2data, "OLM_3T_all_data.RData"))
+load(paste0(path2data, "question_data.RData"))
+
+# Select the subjects included in this analysis
+## Load the subjects that are included in this analysis
+subjectFile <- readLines(paste0(path2data, "SpaNov_subject2analyse.txt"))
+subjIDs_R   <- str_split(subjectFile, pattern = ",")[[1]] 
+subjIDs     <- lookupTable$anonKey[lookupTable$Rnum %in% subjIDs_R]
+# Important note: subjIDs_R do not have the same order as subjIDs!!!!!!!!!!!!!
+
+## Subset to data that is being included in the analysis
+OLM_7T_position_data <- OLM_7T_position_data[OLM_7T_position_data$subject %in% subjIDs, ]
+demographics         <- demographics[demographics$subject %in% subjIDs, ]
+DW_position_data     <- DW_position_data[DW_position_data$subject %in% subjIDs, ]
+OLM_7T_logEntries    <- OLM_7T_logEntries[OLM_7T_logEntries$ppid %in% subjIDs, ]
+OLM_7T_trial_results <- OLM_7T_trial_results[OLM_7T_trial_results$subject %in% subjIDs, ]
+question_data        <- question_data[question_data$subject %in% subjIDs, ]
+
+## Subset to retrieval only
+OLM_7T_retrieval <- OLM_7T_trial_results[OLM_7T_trial_results$trialType == "retrieval", ]
+OLM_7T_encoding  <- OLM_7T_trial_results[OLM_7T_trial_results$trialType == "encoding", ]
+
+# Get the object locations to verify object placement in screenshots
+obj_locations <- ddply(OLM_7T_trial_results, c("targets", "objectName", "targetNames"),
+                       summarise, object_x_sd = sd(object_x), object_x = mean(object_x),
+                       object_z_sd = sd(object_z), object_z = mean(object_z))
+```
+
+</details>
+
+# Prepare data 
+For now we decided to start modelling only encoding trials because of the simplicity. For this we're using the following measures:
+
+- Locomotion
+  - Percent rotation
+  - Percent stationary
+  - Percent translation
+- Distances
+  - to the centre
+  - to the object
+  - traveled (probably not worth calculating)
+- Number of button presses
+
+
+## Locomotion
+```{r locomotion}
+# Subset to encoding
+OLM_7T_position_encoding <- OLM_7T_position_data[OLM_7T_position_data$trialType == "encoding", ] 
+
+# The amount we found the values to avoid false positive
+rotation_round  <- 2 # round rotation values to this decimal point
+
+# Function to determine which state a time point belongs to
+what_state <- function(rot_y, moving2){
+  # Get angles 
+  angle1 <- rot_y[2:length(rot_y)]
+  angle2 <- rot_y[1:(length(rot_y)-1)]
+  
+  # Calculate the amount was rotated between the time points and then rotate
+  rotated <- c(NA, round(angularDifference(angle1, angle2), rotation_round))
+  
+  # If rotation is zero, call it stationary, otherwise it is rotation
+  tra_rot_sta <- ifelse(abs(rotated) == 0 | is.na(rotated), 
+                        'stationary', 'rotation') 
+  
+  # Set time point to translation based the information saved by unity
+  tra_rot_sta[moving2] <- 'translation'
+  
+  # Return
+  return(tra_rot_sta)
+}
+
+# Calculate the state for each time points for each subject and each trial
+OLM_7T_position_encoding <- ddply(OLM_7T_position_encoding, c("subject", "trial"), 
+                  mutate, locomotion = what_state(rot_y, moving))
+```
+
+## Downsampling and average measures
+```{r downsample_and_calculate_measures}
+# Create X-second bins
+time_window <- 2
+OLM_7T_position_encoding$time_bin <- floor(OLM_7T_position_encoding$time / time_window) * time_window
+
+# Add current object position to the data
+OLM_7T_position_encoding$object_x <- NA
+OLM_7T_position_encoding$object_z <- NA
+
+## Loop through and add information for each time
+for(i in 1:nrow(OLM_7T_encoding)){
+  # Get index for this participant and this trial
+  index <- OLM_7T_position_encoding$subject == OLM_7T_encoding$subject[i] & 
+    OLM_7T_position_encoding$trial == OLM_7T_encoding$trial_num[i]
+ 
+  # Add object location to position data frame
+  OLM_7T_position_encoding$object_x[index] <- OLM_7T_encoding$object_x[i]
+  OLM_7T_position_encoding$object_z[index] <- OLM_7T_encoding$object_z[i]
+}
+
+# Calculate Euclidean distance between current position and object position
+x1 <- OLM_7T_position_encoding$pos_x
+z1 <- OLM_7T_position_encoding$pos_z
+x2 <- OLM_7T_position_encoding$object_x
+z2 <- OLM_7T_position_encoding$object_z
+OLM_7T_position_encoding$dist2obj <- euclideanDistance3D(x1, 1, z1, x2, 1, z2)
+
+# Calculate distance to centre
+x1 <- OLM_7T_position_encoding$pos_x
+z1 <- OLM_7T_position_encoding$pos_z
+x2 <- 0
+z2 <- 0
+OLM_7T_position_encoding$dist2cenrte <- euclideanDistance3D(x1, 1, z1, x2, 1, z2)
+
+# Downsample using ddply
+OLM_7T_HMM <- ddply(OLM_7T_position_encoding, c("subject", "trial", "trialType", "time_bin"), 
+                    summarise, duration = max(time) - min(time),
+                    event_start = min(time), event_end = max(time), 
+                    translation = mean(locomotion == "translation"),
+                    rotation = mean(locomotion == "rotation"),
+                    stationary = mean(locomotion == "stationary"), 
+                    dist2obj = mean(dist2obj),
+                    dist2cenrte = mean(dist2cenrte))
+
+# Make start of the trial time 0
+OLM_7T_HMM <- ddply(OLM_7T_HMM, c("subject", "trial"), mutate, time = time_bin - min(time_bin))
+
+# Calculate number of button presses
+## Subset the log data frame to only button presses
+button_messages <- c("Datapixx: Green!", "Datapixx: Red!", "Datapixx: Yellow!", "Datapixx: Blue!")
+OLM_7T_logEntries_button <- OLM_7T_logEntries[OLM_7T_logEntries$message %in% button_messages, ]
+
+## Loop through OLM_7T_HMM and count button presses for the time periods in OLM_7T_logEntries_button
+OLM_7T_HMM$button_presses <- NA
+for(i in 1:nrow(OLM_7T_HMM)){
+  # Get start and time plus subject
+  event_start <- OLM_7T_HMM$event_start[i]
+  event_end   <- OLM_7T_HMM$event_end[i]
+  subject     <- OLM_7T_HMM$subject[i]
+  
+  # Count the number of TRUE values
+  OLM_7T_HMM$button_presses[i] <- sum(OLM_7T_logEntries_button$ppid == subject & 
+        (OLM_7T_logEntries_button$timestamp >= event_start & OLM_7T_logEntries_button$timestamp < event_end))
+}
+```
+
+## Visualise measures
+```{r visualise_measure, fig.width = 10}
+# Convert from wide to long
+OLM_7T_HMM_long <- reshape2::melt(OLM_7T_HMM, 
+                                id.vars = c("subject", "trial", "trialType", "time_bin", "duration"))
+# Locomotion
+## Subset to locomotion
+locomotion_df <- OLM_7T_HMM_long[OLM_7T_HMM_long$variable %in% c("translation", "rotation", "stationary"), ]
+
+## Create plot
+loco_plot <- ggplot(locomotion_df, aes(x = variable, y = value, fill = variable)) +
+	geom_rain(rain.side = 'l', point.args = list(alpha = 0.01), 
+	          point.args.pos = list(position = position_jitter(width = 0.09, height = 0)),
+	          boxplot.args.pos = list(width = 0.05, position = position_nudge(x = 0.15)),
+	          violin.args.pos  = list(width = 0.7, position = position_nudge(x = 0.20))) +
+  theme_classic() +
+  scale_fill_manual(values = baseColours) +
+  theme(legend.position = "none") +
+  labs(title = "Locomotion states", x = "Locomotion states", y = "Percent")
+
+# Distances
+## Subset to distance to centre and object
+distance_df <- OLM_7T_HMM_long[OLM_7T_HMM_long$variable %in% c("dist2obj", "dist2cenrte"), ]
+
+## Create plot
+dist_plot <- ggplot(distance_df, aes(x = variable, y = value, fill = variable)) +
+	geom_rain(rain.side = 'l', point.args = list(alpha = 0.01), 
+	          point.args.pos = list(position = position_jitter(width = 0.09, height = 0)),
+	          boxplot.args.pos = list(width = 0.05, position = position_nudge(x = 0.15)),
+	          violin.args.pos  = list(width = 0.7, position = position_nudge(x = 0.20))) +
+  scale_fill_manual(values = baseColours[c(1, 3)]) +
+  theme_classic() +
+  theme(legend.position = "none") +
+  labs(title = "Distances", x = "Measure", y = "Virtual metres")
+
+# Distances
+## Subset to distance to centre and object
+button_df <- OLM_7T_HMM_long[OLM_7T_HMM_long$variable %in% c("button_presses"), ]
+
+## Create plot
+button_plot <- ggplot(button_df, aes(x = variable, y = value, fill = variable)) +
+	geom_rain(rain.side = 'l', point.args = list(alpha = 0.01), 
+	          point.args.pos = list(position = position_jitter(width = 0.09, height = 0)),
+	          boxplot.args.pos = list(width = 0.05, position = position_nudge(x = 0.15)),
+	          violin.args.pos  = list(width = 0.7, position = position_nudge(x = 0.20))) +
+  theme_classic() +
+  theme(legend.position = "none") +
+  scale_fill_manual(values = baseColours[2]) +
+  labs(title = "Button\npresses", x = "Measure", y = "Number of button presses")
+
+# combine
+plot_grid(loco_plot, dist_plot, button_plot, align = "hv",
+          rel_widths = 3:1, nrow = 1)
+```
+
+# Write to disk
+```{r save2csv}
+write.csv(OLM_7T_HMM, file = "data/OLM_HMM_encoding.csv", row.names = FALSE)
+```
