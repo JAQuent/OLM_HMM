@@ -1,0 +1,16 @@
+name: OLM_HMM
+channels:
+  - conda-forge
+  - defaults
+dependencies:
+  - python=3.9
+  - jupyterlab
+  - numpy
+  - scipy
+  - scikit-learn
+  - pandas
+  - matplotlib
+  - seaborn
+  - pip
+  - pip:
+    - hmmlearn
