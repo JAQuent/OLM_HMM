@@ -1,3 +1,4 @@
 from .config import (
-        PATHS
+        PATHS,
+        PARAMETERS
         )

@@ -11,6 +11,17 @@ PATHS = {
         'src_r': PROJECT_DIR / 'src' / 'r'       
         }
 
+PARAMETERS = {
+        'hmm_features': [
+            'translation',
+            'rotation',
+            'stationary',
+            'dist2obj',
+            'dist2centre',
+            'button_presses'
+            ]
+        }
+
 # Ensure directories exist
 for path in PATHS.values():
     path.mkdir(parents=True, exist_ok=True)
