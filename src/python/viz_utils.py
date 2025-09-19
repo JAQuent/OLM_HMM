@@ -2,6 +2,10 @@ import matplotlib as mpl
 import matplotlib.pyplot as plt
 import pandas as pd
 import seaborn as sns
+from pathlib import Path
+from typing import Union
+from matplotlib.figure import Figure
+
 
 def sns_styleset():
     '''Configure parameters for plotting'''
@@ -23,7 +27,7 @@ def sns_styleset():
     mpl.rcParams['xtick.major.size']  = 12
     mpl.rcParams['ytick.major.size']  = 12
     mpl.rcParams['font.family']       = 'sans-serif'
-    mpl.rcParams['font.sans-serif']   = ['Myriad Pro']
+    mpl.rcParams['font.sans-serif']   = ['Liberation Sans']
     mpl.rcParams['font.weight']       = 'regular'
     mpl.rcParams['axes.titlesize']    = 30
     mpl.rcParams['axes.labelsize']    = 30
@@ -55,16 +59,37 @@ def pandas_styleset():
     pd.set_option('display.float_format', lambda x: '%.4f' % x)
 
 
-def save_figure(fig, fig_dir, file_name, dpi=300):
+def save_figure(
+    fig: Figure, 
+    fig_dir: Union[Path, str], 
+    file_name: str, 
+    dpi: int = 300
+) -> None:
     """
     Save figure to file
-
     Args:
         fig: Matplotlib figure to save
-        filepath: Path to save the figure
+        fig_dir: Directory path to save the figure
+        file_name: Name of the file to save
         dpi: Resolution in dots per inch
     """
+    fig_dir = Path(fig_dir)  # Convert to Path if string
     fig_dir.mkdir(parents=True, exist_ok=True)
     filepath = fig_dir / file_name
     fig.savefig(filepath, dpi=dpi, bbox_inches='tight')
     plt.close(fig)
+
+
+
+def plot_distribution(
+    df: pd.DataFrame, 
+    column: str, 
+    xlabel: str, 
+    fig_dir: Union[Path, str], 
+    file_name: str, 
+    bins: int = 30
+) -> None:
+    fig, ax = plt.subplots()
+    ax.hist(df[column], bins=bins)
+    ax.set_xlabel(xlabel)
+    save_figure(fig, fig_dir, file_name)
