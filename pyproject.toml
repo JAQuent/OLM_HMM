@@ -1,0 +1,33 @@
+[build-system]
+requires = ["setuptools>=45", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "olm-hmm"
+version = "0.1.0"
+description = "HMM analysis for OLM spatial navigation experiment"
+authors = [
+    {name = "Your Name", email = "your.email@example.com"}
+]
+readme = "README.md"
+requires-python = ">=3.9"
+dependencies = [
+    "numpy",
+    "scipy", 
+    "scikit-learn",
+    "pandas",
+    "matplotlib",
+    "seaborn",
+    "hmmlearn",
+]
+
+[project.optional-dependencies]
+dev = [
+    "jupyterlab",
+]
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.setuptools.package-dir]
+"" = "src"
