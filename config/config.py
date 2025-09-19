@@ -7,6 +7,7 @@ PATHS = {
         'processed_data': PROJECT_DIR / 'data' / 'processed', 
         'figures': PROJECT_DIR / 'results' / 'figures',
         'logs': PROJECT_DIR / 'results' / 'logs',
+        'hmms': PROJECT_DIR / 'results' / 'hmms',
         'src_python': PROJECT_DIR / 'src' / 'python',
         'src_r': PROJECT_DIR / 'src' / 'r'       
         }
